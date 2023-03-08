@@ -13,10 +13,11 @@ export KEYSTONE_DRIVER          ?= $(KEYSTONE)/linux-keystone-driver
 export KEYSTONE_EXAMPLES        ?= $(KEYSTONE)/examples
 export KEYSTONE_RUNTIME         ?= $(KEYSTONE)/runtime
 export KEYSTONE_SDK             ?= $(KEYSTONE)/sdk
+export KEYSTONE_TVM             ?= $(KEYSTONE)/tvm
 export KEYSTONE_BOOTROM         ?= $(KEYSTONE)/bootrom
 export KEYSTONE_SM              ?= $(KEYSTONE)/sm
 
-export BUILDDIR                 ?= $(KEYSTONE)/build-$(KEYSTONE_PLATFORM)$(KEYSTONE_BITS)
+export BUILDDIR                 ?= $(KEYSTONE)/build-$(KEYSTONE_PLATFORM)$(KEYSTONE_BITS)$(KEYSTONE_VARIANT)
 export BUILDROOT_OVERLAYDIR     ?= $(BUILDDIR)/overlay
 export BUILDROOT_BUILDDIR       ?= $(BUILDDIR)/buildroot.build
 
@@ -28,7 +29,12 @@ include mkutils/log.mk
 
 BUILDROOT_CONFIGFILE    ?= qemu_riscv$(KEYSTONE_BITS)_virt_defconfig
 ifeq ($(KEYSTONE_PLATFORM),mpfs)
-	EXTERNALS += microchip
+        EXTERNALS += tvm microchip
+        BUILDROOT_CONFIGFILE := riscv64_mpfs_defconfig
+endif
+
+ifeq ($(KEYSTONE_PLATFORM),generic)
+        EXTERNALS += tvm
 endif
 
 # Highest priority external
@@ -72,6 +78,7 @@ $(BUILDROOT_OVERLAYDIR)/.done: $(BUILDROOT_OVERLAYDIR)
 	mkdir -p $(BUILDROOT_OVERLAYDIR)/root/.ssh
 	ssh-keygen -C 'root@keystone' -t rsa -f $(BUILDROOT_OVERLAYDIR)/root/.ssh/id-rsa -N ''
 	cp $(BUILDROOT_OVERLAYDIR)/root/.ssh/{id-rsa.pub,authorized_keys}
+	-cp -ar $(KEYSTONE)/rootfs/$(KEYSTONE_PLATFORM)/* $(BUILDROOT_OVERLAYDIR)
 	touch $@
 
 # Main build target for buildroot. The specific subtarget to build can be overriden

@@ -11,6 +11,7 @@
 #include "uaccess.h"
 #include "mm/mm.h"
 #include "util/rt_util.h"
+#include "sys/thread.h"
 
 #include "call/syscall_nums.h"
 
@@ -25,6 +26,14 @@
 #ifdef USE_NET_SYSCALL
 #include "call/net_wrap.h"
 #endif /* USE_NET_SYSCALL */
+
+#ifdef USE_DRIVERS
+#include "drivers/drivers.h"
+#endif
+
+#ifdef USE_CALLEE
+#include "call/callee.h"
+#endif // USE_CALLEE
 
 extern void exit_enclave(uintptr_t arg0);
 
@@ -43,7 +52,7 @@ uintptr_t dispatch_edgecall_syscall(struct edge_syscall* syscall_data_ptr, size_
     return -1;
   }
 
-  ret = sbi_stop_enclave(1);
+  ret = sbi_stop_enclave(STOP_EDGE_CALL_HOST);
 
   if (ret != 0) {
     return -1;
@@ -92,7 +101,7 @@ uintptr_t dispatch_edgecall_ocall( unsigned long call_id,
     goto ocall_error;
   }
 
-  ret = sbi_stop_enclave(1);
+  ret = sbi_stop_enclave(STOP_EDGE_CALL_HOST);
 
   if (ret != 0) {
     goto ocall_error;
@@ -157,7 +166,7 @@ void handle_syscall(struct encl_ctx* ctx)
   uintptr_t arg4 = ctx->regs.a4;
 
   // We only use arg5 in these for now, keep warnings happy.
-#if defined(USE_LINUX_SYSCALL) || defined(USE_IO_SYSCALL)
+#if defined(USE_LINUX_SYSCALL) || defined(USE_IO_SYSCALL) || defined(USE_CALLEE)
   uintptr_t arg5 = ctx->regs.a5;
 #endif /* IO_SYSCALL */
   uintptr_t ret = 0;
@@ -209,6 +218,104 @@ void handle_syscall(struct encl_ctx* ctx)
 
     break;
 
+  case(RUNTIME_SYSCALL_CLAIM_MMIO):
+    if(arg1 > sizeof(rt_copy_buffer_1)) {
+      ret = -1;
+      break;
+    }
+
+    uintptr_t devstr_claim_pa = kernel_va_to_pa(rt_copy_buffer_1);
+    copy_from_user(rt_copy_buffer_1, (void *) arg0, arg1);
+
+    ret = sbi_claim_mmio(devstr_claim_pa);
+
+#ifdef USE_DRIVERS
+    // Initialize the hardware
+    if(ret == 0) {
+      ret = init_driver((char *) rt_copy_buffer_1);
+    }
+#endif
+
+    break;
+
+  case(RUNTIME_SYSCALL_RELEASE_MMIO):
+    if(arg1 > sizeof(rt_copy_buffer_1)) {
+      ret = -1;
+      break;
+    }
+
+    uintptr_t devstr_release_pa = kernel_va_to_pa(rt_copy_buffer_1);
+    copy_from_user(rt_copy_buffer_1, (void *) arg0, arg1);
+
+#ifdef USE_DRIVERS
+    // Teardown the hardware
+    fini_driver((char *) rt_copy_buffer_1);
+#endif
+
+    ret = sbi_release_mmio(devstr_release_pa);
+    break;
+
+#ifdef USE_CALLEE
+  case(RUNTIME_SYSCALL_CALL_ENCLAVE):
+    ret = sbi_call_enclave(arg0, arg1, arg2, arg3, arg4, arg5);
+
+#ifdef USE_CALLEE_PROFILE
+    // Return value here is the timestamp
+    uint64_t start = timestamp_exit;
+    uint64_t end = ret;
+    ret = 0;
+
+    if(arg2 == 0xffffffffDEADBEEF) {
+      copy_to_user((uint64_t *) arg3, &start, sizeof(uint64_t));
+      copy_to_user((uint64_t *) arg4, &end, sizeof(uint64_t));
+    }
+#endif
+
+    break;
+
+  case(RUNTIME_SYSCALL_RET_ENCLAVE):
+    sbi_ret_enclave(arg0);
+    break;
+
+  case(RUNTIME_SYSCALL_GET_CALL_ARGS):
+    ret = get_call_args((void *) arg0, (size_t) arg1);
+    break;
+#endif // USE_CALLEE
+
+  case(RUNTIME_SYSCALL_SHARE_REGION):
+    ret = sbi_share_region(translate(arg0), arg1, arg2);
+    break;
+
+  case(RUNTIME_SYSCALL_UNSHARE_REGION):
+    ret = sbi_unshare_region(translate(arg0), arg1);
+    break;
+
+  case(RUNTIME_SYSCALL_YIELD_MAIN_THREAD):
+    // Give up our current time slice and report back to the SDK
+    ret = sbi_stop_enclave(STOP_YIELD_ENCLAVE);
+    break;
+
+  case(RUNTIME_SYSCALL_TRANSLATE):
+    ret = translate(arg0);
+    break;
+
+  case(RUNTIME_SYSCALL_MAP):
+    ret = map_with_dynamic_page_table(arg0, arg1, arg2, true);
+    break;
+
+  case(RUNTIME_SYSCALL_UNMAP):
+    unmap_with_any_page_table(arg0, arg1);
+    break;
+
+#ifdef USE_CALLEE_PROFILE
+  case(RUNTIME_SYSCALL_GET_TIMING_INFO):
+    ret = get_timing_info((void *) arg0, (void *) arg1);
+    break;
+#endif
+
+  case(RUNTIME_SYSCALL_MAP_SHARED_BUF):
+    ret = map_anywhere_with_dynamic_page_table(translate(shared_buffer), shared_buffer_size, true);
+    break;
 
 #ifdef USE_LINUX_SYSCALL
   case(SYS_clock_gettime):
@@ -239,6 +346,15 @@ void handle_syscall(struct encl_ctx* ctx)
     ret = linux_set_tid_address((int*) arg0);
     break;
 
+  case(SYS_sysinfo):
+    ret = linux_sysinfo((struct sysinfo *) arg0);
+    break;
+
+  case(SYS_futex):
+    // lie?
+    ret = 0;
+    break;
+
   case(SYS_brk):
     ret = syscall_brk((void*) arg0);
     break;
@@ -251,33 +367,85 @@ void handle_syscall(struct encl_ctx* ctx)
   case(SYS_munmap):
     ret = syscall_munmap((void*) arg0, (size_t)arg1);
     break;
+  
+  case(SYS_ioctl):
+    ret = syscall_ioctl((int) arg0, (unsigned long) arg1, (uintptr_t) arg2);
+    break;
 
   case(SYS_mprotect):
     ret = syscall_mprotect((void *) arg0, (size_t) arg1, (int) arg2);
     break;
 
+#ifdef USE_CALLEE
+  case(SYS_clone):
+    ret = syscall_clone(arg0, arg1, (int *) arg2, arg3, (int *) arg4, ctx->regs.gp);
+    break;
+#endif // USE_CALLEE
+
   case(SYS_exit):
+    // SYS_exit should exit only the current thread
+#ifdef USE_CALLEE
+    if(!is_main_thread()) {
+      free_thread_entry(false, arg0);
+      sbi_ret_enclave(arg0);
+    } else
+#endif // USE_CALLEE
+    {
+      sbi_exit_enclave(arg0);
+    }
+
   case(SYS_exit_group):
-    print_strace("[runtime] exit or exit_group (%lu)\r\n",n);
-    sbi_exit_enclave(arg0);
+    // SYS_exit_group should tear down the whole surrounding process
+#ifdef USE_CALLEE
+    if(!is_main_thread()) {
+      free_thread_entry(true, arg0);
+      sbi_ret_enclave(arg0);
+    } else
+#endif // USE_CALLEE
+    {
+      // Regular exit
+      sbi_exit_enclave(arg0);
+    }
     break;
 #endif /* USE_LINUX_SYSCALL */
 
-#ifdef USE_IO_SYSCALL
+#if defined(USE_IO_SYSCALL) || defined(USE_DRIVERS)
   case(SYS_read):
+#ifdef USE_DRIVERS
+    ret = drivers_read_override((int)arg0, (void *)arg1, (size_t)arg2);
+#else
     ret = io_syscall_read((int)arg0, (void*)arg1, (size_t)arg2);
+#endif
     break;
   case(SYS_write):
+#ifdef USE_DRIVERS
+    ret = drivers_write_override((int)arg0, (void *)arg1, (size_t)arg2);
+#else
     ret = io_syscall_write((int)arg0, (void*)arg1, (size_t)arg2);
+#endif
     break;
+  case(SYS_openat):
+#ifdef USE_DRIVERS
+    ret = drivers_openat_override((int)arg0, (char *)arg1, (int)arg2, (mode_t)arg3);
+#else
+    ret = io_syscall_openat((int)arg0, (char*)arg1, (int)arg2, (mode_t)arg3);
+#endif
+    break;
+  case(SYS_close):
+#ifdef USE_DRIVERS
+    ret = drivers_close_override((int)arg0);
+#else
+    ret = io_syscall_close((int)arg0);
+#endif
+    break;
+#endif
+
+#ifdef USE_IO_SYSCALL
   case(SYS_writev):
     ret = io_syscall_writev((int)arg0, (const struct iovec*)arg1, (int)arg2);
     break;
   case(SYS_readv):
     ret = io_syscall_readv((int)arg0, (const struct iovec*)arg1, (int)arg2);
-    break;
-  case(SYS_openat):
-    ret = io_syscall_openat((int)arg0, (char*)arg1, (int)arg2, (mode_t)arg3);
     break;
   case(SYS_unlinkat):
     ret = io_syscall_unlinkat((int)arg0, (char*)arg1, (int)arg2);
@@ -299,9 +467,6 @@ void handle_syscall(struct encl_ctx* ctx)
     break;
   case(SYS_fsync):
     ret = io_syscall_fsync((int)arg0);
-    break;
-  case(SYS_close):
-    ret = io_syscall_close((int)arg0);
     break;
   case(SYS_epoll_create1):
     ret = io_syscall_epoll_create((int) arg0); 
@@ -339,9 +504,9 @@ void handle_syscall(struct encl_ctx* ctx)
     break; 
   case(SYS_setsockopt):
     ret = io_syscall_setsockopt((int) arg0, (int) arg1, (int) arg2, (int *) arg3, (int) arg4); 
-    break; 
-  case(SYS_connect):
-    ret = io_syscall_connect((int) arg0, (uintptr_t) arg1, (int) arg2);
+    break;
+  case(SYS_getsockopt):
+    ret = io_syscall_getsockopt((int) arg0, (int) arg1, (int) arg2, (uintptr_t) arg3, (uintptr_t) arg4);
     break;
   case (SYS_bind):
     ret = io_syscall_bind((int) arg0, (uintptr_t) arg1, (int) arg2);
@@ -372,6 +537,18 @@ void handle_syscall(struct encl_ctx* ctx)
     break; 
   case(SYS_pselect6): 
     ret = io_syscall_pselect((int) arg0, (uintptr_t) arg1, (uintptr_t) arg2, (uintptr_t) arg3, (uintptr_t) arg4, (uintptr_t) arg5);
+    break;
+  case(SYS_ppoll):
+    ret = io_syscall_ppoll((uintptr_t) arg0, (int) arg1, (uintptr_t) arg2, (uintptr_t) arg3);
+    break;
+  case(SYS_sendmsg):
+    ret = io_syscall_sendmsg((int) arg0, (uintptr_t) arg1, (int) arg2);
+    break;
+  case(SYS_recvmsg):
+    ret = io_syscall_recvmsg((int) arg0, (uintptr_t) arg1, (int) arg2);
+    break;
+  case(SYS_connect):
+    ret = io_syscall_connect((int) arg0, (uintptr_t) arg1, (int) arg2);
     break;
 #endif /* USE_NET_SYSCALL */
 

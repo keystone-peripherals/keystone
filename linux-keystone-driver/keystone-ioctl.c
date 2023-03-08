@@ -23,7 +23,7 @@ int keystone_create_enclave(struct file *filep, unsigned long arg)
   }
 
   /* Pass base page table */
-  enclp->pt_ptr = __pa(enclave->epm->root_page_table);
+  enclp->pt_ptr = enclave->epm->pa;
   enclp->epm_size = enclave->epm->size;
 
   /* allocate UID */
@@ -39,7 +39,7 @@ int keystone_finalize_enclave(unsigned long arg)
 {
   struct sbiret ret;
   struct enclave *enclave;
-  struct utm *utm;
+  struct encl_mem *utm;
   struct keystone_sbi_create_t create_args;
 
   struct keystone_ioctl_create_enclave *enclp = (struct keystone_ioctl_create_enclave *) arg;
@@ -59,7 +59,7 @@ int keystone_finalize_enclave(unsigned long arg)
   utm = enclave->utm;
 
   if (utm) {
-    create_args.utm_region.paddr = __pa(utm->ptr);
+    create_args.utm_region.paddr = utm->pa;
     create_args.utm_region.size = utm->size;
   } else {
     create_args.utm_region.paddr = 0;
@@ -72,11 +72,13 @@ int keystone_finalize_enclave(unsigned long arg)
   create_args.free_paddr = enclp->free_paddr;
 
   create_args.params = enclp->params;
+  create_args.force_tor = enclp->force_tor;
+  create_args.misc_params = enclp->miscParams;
 
   ret = sbi_sm_create_enclave(&create_args);
 
   if (ret.error) {
-    keystone_err("keystone_create_enclave: SBI call failed with error codd %ld\n", ret.error);
+    keystone_err("keystone_create_enclave: SBI call failed with error code %ld\n", ret.error);
     goto error_destroy_enclave;
   }
 
@@ -123,7 +125,7 @@ int keystone_run_enclave(unsigned long data)
 int utm_init_ioctl(struct file *filp, unsigned long arg)
 {
   int ret = 0;
-  struct utm *utm;
+  struct encl_mem *utm;
   struct enclave *enclave;
   struct keystone_ioctl_create_enclave *enclp = (struct keystone_ioctl_create_enclave *) arg;
   long long unsigned untrusted_size = enclp->params.untrusted_size;
@@ -135,7 +137,7 @@ int utm_init_ioctl(struct file *filp, unsigned long arg)
     return -EINVAL;
   }
 
-  utm = kmalloc(sizeof(struct utm), GFP_KERNEL);
+  utm = kmalloc(sizeof(struct encl_mem), GFP_KERNEL);
   if (!utm) {
     ret = -ENOMEM;
     return ret;
@@ -146,7 +148,7 @@ int utm_init_ioctl(struct file *filp, unsigned long arg)
   /* prepare for mmap */
   enclave->utm = utm;
 
-  enclp->utm_free_ptr = __pa(utm->ptr);
+  enclp->utm_free_ptr = utm->pa;
 
   return ret;
 }

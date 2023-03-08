@@ -1,13 +1,12 @@
 project(keystone-eapp C ASM)
 
-set(CFLAGS      "-Wall -Werror")
+set(CFLAGS      "-Wall -Werror -mcmodel=medany")
 set(LDFLAGS     "-static")
 
 set(SOURCE_FILES
+  callee.c
   encret.s
-  string.c
   syscall.c
-  tiny-malloc.c
   )
 
 set(INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/include/app)

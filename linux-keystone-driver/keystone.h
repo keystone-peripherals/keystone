@@ -34,29 +34,23 @@ int keystone_release(struct inode *inode, struct file *file);
 int keystone_mmap(struct file *filp, struct vm_area_struct *vma);
 
 /* enclave private memory */
-struct epm {
-  pte_t* root_page_table;
-  vaddr_t ptr;
-  size_t size;
-  unsigned long order;
-  paddr_t pa;
-  bool is_cma;
-};
 
-struct utm {
-  pte_t* root_page_table;
-  void* ptr;
-  size_t size;
-  unsigned long order;
+struct encl_mem {
+    pte_t* root_page_table;
+    vaddr_t ptr;
+    size_t size, alloc_size;
+    unsigned long order;
+    paddr_t pa;
+    size_t align_pad;
+    bool is_cma;
 };
-
 
 struct enclave
 {
   unsigned long eid;
   int close_on_pexit;
-  struct utm* utm;
-  struct epm* epm;
+  struct encl_mem* utm;
+  struct encl_mem* epm;
   bool is_init;
 };
 
@@ -80,15 +74,15 @@ unsigned int enclave_idr_alloc(struct enclave* enclave);
 struct enclave* enclave_idr_remove(unsigned int ueid);
 struct enclave* get_enclave_by_id(unsigned int ueid);
 
-static inline uintptr_t  epm_satp(struct epm* epm) {
+static inline uintptr_t  epm_satp(struct encl_mem* epm) {
   return ((uintptr_t)epm->root_page_table >> RISCV_PGSHIFT | SATP_MODE_CHOICE);
 }
 
-int epm_destroy(struct epm* epm);
-int epm_init(struct epm* epm, unsigned int count);
-int utm_destroy(struct utm* utm);
-int utm_init(struct utm* utm, size_t untrusted_size);
-paddr_t epm_va_to_pa(struct epm* epm, vaddr_t addr);
+int epm_destroy(struct encl_mem* epm);
+int epm_init(struct encl_mem* epm, unsigned int count);
+int utm_destroy(struct encl_mem* utm);
+int utm_init(struct encl_mem* utm, size_t untrusted_size);
+paddr_t epm_va_to_pa(struct encl_mem* epm, vaddr_t addr);
 
 
 unsigned long calculate_required_pages(

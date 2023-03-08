@@ -1,6 +1,8 @@
 #include <asm/csr.h>
 
+#include "sys/boot.h"
 #include "util/printf.h"
+#include "util/rt_util.h"
 #include "sys/interrupt.h"
 #include "call/syscall.h"
 #include "mm/vm.h"
@@ -10,17 +12,29 @@
 #include "mm/mm.h"
 #include "sys/env.h"
 #include "mm/paging.h"
+#include "sys/thread.h"
+#include "call/linux_wrap.h"
+
+#ifdef USE_DRIVERS
+#include "drivers/drivers.h"
+#endif
+
+#ifdef USE_CALLEE
+#include "call/callee.h"
+#endif
 
 /* defined in vm.h */
 extern uintptr_t shared_buffer;
 extern uintptr_t shared_buffer_size;
 
-/* initial memory layout */
-uintptr_t utm_base;
-size_t utm_size;
 
 /* defined in entry.S */
 extern void* encl_trap_handler;
+
+struct runtime_misc_params_t misc_params;
+#ifdef USE_LINUX_SYSCALL
+extern uint64_t initial_time_since_unix_epoch_s;
+#endif
 
 #ifdef USE_FREEMEM
 
@@ -59,7 +73,8 @@ void
 copy_root_page_table()
 {
   /* the old table lives in the first page */
-  pte* old_root_page_table = (pte*) EYRIE_LOAD_START;
+  pte* old_root_page_table = (pte*) EYRIE_LOAD_START,
+      *root_page_table = get_current_root();
   int i;
 
   /* copy all valid entries of the old root page table */
@@ -81,7 +96,7 @@ init_freemem()
 #endif // USE_FREEMEM
 
 /* initialize user stack */
-void
+void *
 init_user_stack_and_env(ELF(Ehdr) *hdr)
 {
   void* user_sp = (void*) EYRIE_USER_STACK_START;
@@ -101,43 +116,51 @@ init_user_stack_and_env(ELF(Ehdr) *hdr)
 #endif // USE_FREEMEM
 
   // setup user stack env/aux
-  user_sp = setup_start(user_sp, hdr);
-
-  // prepare user sp
-  csr_write(sscratch, user_sp);
+  return setup_start(user_sp, hdr);
 }
 
-void
-eyrie_boot(uintptr_t dummy, // $a0 contains the return value from the SBI
-           uintptr_t dram_base,
-           uintptr_t dram_size,
-           uintptr_t runtime_paddr,
-           uintptr_t user_paddr,
-           uintptr_t free_paddr,
-           uintptr_t utm_vaddr,
-           uintptr_t utm_size)
+struct eyrie_boot_args {
+      uintptr_t dummy; // $a0 contains the return value from the SBI
+      uintptr_t dram_base;
+      uintptr_t dram_size;
+      uintptr_t runtime_paddr;
+      uintptr_t user_paddr;
+      uintptr_t free_paddr;
+      uintptr_t utm_vaddr;
+      uintptr_t utm_size;
+};
+
+void *
+eyrie_boot(struct eyrie_boot_args *args)
 {
+  void *user_sp;
+
   /* set initial values */
-  load_pa_start = dram_base;
-  shared_buffer = utm_vaddr;
-  shared_buffer_size = utm_size;
+  load_pa_start = args->dram_base;
+  shared_buffer = args->utm_vaddr;
+  shared_buffer_size = args->utm_size;
   runtime_va_start = (uintptr_t) &rt_base;
-  kernel_offset = runtime_va_start - runtime_paddr;
+  kernel_offset = runtime_va_start - args->runtime_paddr;
 
-  debug("UTM : 0x%lx-0x%lx (%u KB)", utm_vaddr, utm_vaddr+utm_size, utm_size/1024);
-  debug("DRAM: 0x%lx-0x%lx (%u KB)", dram_base, dram_base + dram_size, dram_size/1024);
+  debug("UTM : 0x%lx-0x%lx (%u KB)", args->utm_vaddr, args->utm_vaddr+args->utm_size, args->utm_size/1024);
+  debug("DRAM: 0x%lx-0x%lx (%u KB)", args->dram_base, args->dram_base + args->dram_size, args->dram_size/1024);
+
+  /* basic system init */
+  thread_init();
+
 #ifdef USE_FREEMEM
-  freemem_va_start = __va(free_paddr);
-  freemem_size = dram_base + dram_size - free_paddr;
+  freemem_va_start = __va(args->free_paddr);
+  freemem_size = args->dram_base + args->dram_size - args->free_paddr;
 
-  debug("FREE: 0x%lx-0x%lx (%u KB), va 0x%lx", free_paddr, dram_base + dram_size, freemem_size/1024, freemem_va_start);
+  debug("FREE: 0x%lx-0x%lx (%u KB), va 0x%lx", args->free_paddr, args->dram_base + args->dram_size, freemem_size/1024, freemem_va_start);
 
   /* remap kernel VA */
-  remap_kernel_space(runtime_paddr, user_paddr - runtime_paddr);
-  map_physical_memory(dram_base, dram_size);
+  remap_kernel_space(args->runtime_paddr, args->user_paddr - args->runtime_paddr);
+  map_physical_memory(args->dram_base, args->dram_size);
 
   /* switch to the new page table */
-  csr_write(satp, satp_new(kernel_va_to_pa(root_page_table)));
+  csr_write(satp, satp_new(kernel_va_to_pa(get_current_root())));
+  tlb_flush();
 
   /* copy valid entries from the old page table */
   copy_root_page_table();
@@ -147,15 +170,15 @@ eyrie_boot(uintptr_t dummy, // $a0 contains the return value from the SBI
 
   //TODO: This should be set by walking the userspace vm and finding
   //highest used addr. Instead we start partway through the anon space
-  set_program_break(EYRIE_ANON_REGION_START + (1024 * 1024 * 1024));
+  set_program_break(0x0000003000000000);
 
   #ifdef USE_PAGING
-  init_paging(user_paddr, free_paddr);
+  init_paging(args->user_paddr, args->free_paddr);
   #endif /* USE_PAGING */
 #endif /* USE_FREEMEM */
 
   /* initialize user stack */
-  init_user_stack_and_env((ELF(Ehdr) *) __va(user_paddr));
+  user_sp = init_user_stack_and_env((ELF(Ehdr) *) __va(args->user_paddr));
 
   /* set trap vector */
   csr_write(stvec, &encl_trap_handler);
@@ -165,11 +188,29 @@ eyrie_boot(uintptr_t dummy, // $a0 contains the return value from the SBI
 
   /* set timer */
   init_timer();
+  // get misc_params
+  struct runtime_misc_params_t* misc_params_phys_addr = (struct runtime_misc_params_t*)translate((uintptr_t)&misc_params);
+  sbi_get_misc_params(misc_params_phys_addr);
+#ifdef USE_LINUX_SYSCALL
+  initial_time_since_unix_epoch_s = misc_params.time_since_unix_epoch_s;
+  // print_strace("!!! Value of passed Unix Time is: %ld\n", misc_params.time_since_unix_epoch_s);
+#endif
+
+#ifdef USE_DRIVERS
+  /* initialize any drivers included in the .drivers section */
+  init_driver_subsystem();
+#endif
 
   /* Enable the FPU */
   csr_write(sstatus, csr_read(sstatus) | 0x6000);
 
+#ifdef USE_CALLEE
+  /* This should happen late, so that the values of any CSRs are correctly
+   * backed up in the SM, and used for context switches */
+  callee_init();
+#endif
+
   debug("eyrie boot finished. drop to the user land ...");
   /* booting all finished, droping to the user land */
-  return;
+  return user_sp;
 }

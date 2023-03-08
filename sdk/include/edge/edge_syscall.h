@@ -65,19 +65,13 @@ typedef struct sargs_SYS_socket{
   int protocol;
 } sargs_SYS_socket;
 
-typedef struct sargs_SYS_setsockopt{
+typedef struct sargs_SYS_getsetsockopt{
   int socket;
   int level;
   int option_name;
   socklen_t option_len;
   unsigned char option_value[];
-} sargs_SYS_setsockopt;
-
-typedef struct sargs_SYS_connect{
-  int sockfd;
-  struct sockaddr_storage addr;
-  socklen_t addrlen;
-} sargs_SYS_connect;
+} sargs_SYS_getsetsockopt;
 
 typedef struct sargs_SYS_bind{
   int sockfd;
@@ -119,6 +113,10 @@ typedef struct sargs_SYS_chdir{
   char path[0];
 } sargs_SYS_chdir;
 
+typedef struct sargs_SYS_ioctl {
+  int fd;
+  unsigned long request;
+} sargs_SYS_ioctl;
 
 typedef struct sargs_SYS_epoll_pwait{
   int epfd;
@@ -126,7 +124,6 @@ typedef struct sargs_SYS_epoll_pwait{
   int maxevents;
   int timeout;
 } sargs_SYS_epoll_pwait;
-
 
 typedef struct sargs_SYS_getpeername{
   int sockfd;
@@ -147,8 +144,6 @@ typedef struct sargs_SYS_renameat2{
   char newpath[128];
   unsigned int flags;
 } sargs_SYS_renameat2;
-
-
 
 typedef struct sargs_SYS_umask{
   mode_t mask;
@@ -212,6 +207,45 @@ typedef struct sargs_SYS_sendfile {
   off_t offset; 
   size_t count;
 } sargs_SYS_sendfile;
+
+typedef struct sargs_SYS_ppoll {
+  int nfds;
+  int timeout_is_null;
+  int sigmask_is_null;
+
+  struct timespec timeout_ts;
+  sigset_t sigmask;
+} sargs_SYS_ppoll;
+
+typedef struct sargs_SYS_sendrecvmsg {
+  int sockfd;
+  int flags;
+
+  // msghdr below
+  int msg_flags;
+
+  size_t msg_name_offs;
+  socklen_t msg_namelen;
+
+  size_t msg_iov_offs;
+  size_t msg_iovlen;
+
+  size_t msg_control_offs;
+  size_t msg_controllen;
+} sargs_SYS_sendrecvmsg;
+
+typedef struct sargs_SYS_connect {
+  int sockfd;
+  socklen_t addrlen;
+  char addr[];
+} sargs_SYS_connect;
+
+typedef struct sargs_SYS_clock_gettime {
+  // time_t  tv_sec;       /* seconds */
+  // long tv_nsec;         /* nanoseconds */
+  clockid_t clock;
+  struct timespec tp;
+} sargs_SYS_clock_gettime;
 
 void
 incoming_syscall(struct edge_call* buffer);

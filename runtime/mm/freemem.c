@@ -4,6 +4,7 @@
 #include "mm/vm.h"
 #include "mm/freemem.h"
 #include "mm/paging.h"
+#include "util/spinlock.h"
 
 /* This file implements a simple page allocator (SPA)
  * which stores the pages based on a linked list.
@@ -17,11 +18,13 @@
  * SPA can allocate/free a page in constant time. */
 
 static struct pg_list spa_free_pages;
+spin_lock_t spa_lock = 0;
 
 /* get a free page from the simple page allocator */
 uintptr_t
 __spa_get(bool zero)
 {
+  spin_lock(&spa_lock);
   uintptr_t free_page;
 
   if (LIST_EMPTY(spa_free_pages)) {
@@ -36,6 +39,7 @@ __spa_get(bool zero)
 #endif
     {
       warn("eyrie simple page allocator cannot evict and free pages");
+      spin_unlock(&spa_lock);
       return 0;
     }
   }
@@ -53,6 +57,7 @@ __spa_get(bool zero)
   if (zero)
     memset((void*)free_page, 0, RISCV_PAGE_SIZE);
 
+  spin_unlock(&spa_lock);
   return free_page;
 }
 
@@ -64,6 +69,7 @@ void
 spa_put(uintptr_t page_addr)
 {
   uintptr_t prev;
+  spin_lock(&spa_lock);
 
   assert(IS_ALIGNED(page_addr, RISCV_PAGE_BITS));
   assert(page_addr >= EYRIE_LOAD_START && page_addr < (freemem_va_start  + freemem_size));
@@ -80,6 +86,7 @@ spa_put(uintptr_t page_addr)
   spa_free_pages.tail = page_addr;
 
   spa_free_pages.count++;
+  spin_unlock(&spa_lock);
   return;
 }
 
@@ -96,6 +103,7 @@ void
 spa_init(uintptr_t base, size_t size)
 {
   uintptr_t cur;
+  spa_lock = 0;
 
   LIST_INIT(spa_free_pages);
 

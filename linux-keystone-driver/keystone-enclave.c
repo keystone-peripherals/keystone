@@ -33,8 +33,8 @@ unsigned long calculate_required_pages(
 /* Smart destroy, handles partial initialization of epm and utm etc */
 int destroy_enclave(struct enclave* enclave)
 {
-  struct epm* epm;
-  struct utm* utm;
+  struct encl_mem* epm;
+  struct encl_mem* utm;
   if (enclave == NULL)
     return -ENOSYS;
 
@@ -69,7 +69,7 @@ struct enclave* create_enclave(unsigned long min_pages)
   enclave->utm = NULL;
   enclave->close_on_pexit = 1;
 
-  enclave->epm = kmalloc(sizeof(struct epm), GFP_KERNEL);
+  enclave->epm = kmalloc(sizeof(struct encl_mem), GFP_KERNEL);
   enclave->is_init = true;
   if (!enclave->epm)
   {

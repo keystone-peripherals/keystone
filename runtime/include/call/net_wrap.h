@@ -9,6 +9,7 @@
 
 uintptr_t io_syscall_socket(int domain, int type, int protocol);
 uintptr_t io_syscall_setsockopt(int socket, int level, int option_name, const void *option_value, socklen_t option_len);
+uintptr_t io_syscall_getsockopt(int socket, int level, int optname, uintptr_t optval, uintptr_t optlen);
 uintptr_t io_syscall_connect (int sockfd, uintptr_t addr, socklen_t addrlen);
 uintptr_t io_syscall_bind (int sockfd, uintptr_t addr, socklen_t addrlen);
 uintptr_t io_syscall_listen(int sockfd, int backlog);
@@ -22,5 +23,9 @@ uintptr_t io_syscall_sendto(int sockfd, uintptr_t buf, size_t len, int flags,
 uintptr_t io_syscall_sendfile(int out_fd, int in_fd, uintptr_t offset, int count);
 uintptr_t io_syscall_getuid();
 uintptr_t io_syscall_pselect(int nfds, uintptr_t readfds, uintptr_t writefds, uintptr_t exceptfds, uintptr_t timeout, uintptr_t sigmask);
+uintptr_t io_syscall_ppoll(uintptr_t fds, int nfds, uintptr_t timeout, uintptr_t sigmask);
+uintptr_t io_syscall_sendmsg(int sockfd, uintptr_t msg, int flags);
+uintptr_t io_syscall_recvmsg(int sockfd, uintptr_t msg, int flags);
+uintptr_t io_syscall_connect(int sockfd, uintptr_t addr, socklen_t addrlen);
 #endif /* _NET_WRAP_H_ */
 #endif /* USE_NET_SYSCALL */

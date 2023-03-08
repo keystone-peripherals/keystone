@@ -36,6 +36,8 @@
 #define EYRIE_LOAD_START 0xffffffff00000000
 #define EYRIE_PAGING_START 0xffffffff40000000
 #define EYRIE_UNTRUSTED_START 0xffffffff80000000
+#define EYRIE_TEXT_START 0xffffffffc0000000
+#define EYRIE_MISC_START 0xffffffffd0000000
 #define EYRIE_USER_STACK_START 0x0000000040000000
 #define EYRIE_ANON_REGION_START \
   0x0000002000000000  // Arbitrary VA to start looking for large mappings
@@ -64,5 +66,6 @@
 #define PTE_PPN_SHIFT 10
 
 #ifndef __PREPROCESSING__
+#include <stdint.h>
 typedef uintptr_t pte;
 #endif

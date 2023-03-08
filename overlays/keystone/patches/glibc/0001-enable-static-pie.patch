@@ -1,0 +1,47 @@
+diff --git a/Makeconfig b/Makeconfig
+index 9dd058e04b..949aac31ac 100644
+--- a/Makeconfig
++++ b/Makeconfig
+@@ -397,7 +397,7 @@ pie-default = $(pie-ccflag)
+ ifeq (yes,$(enable-static-pie))
+ static-pie-dt-relr-ldflag = $(dt-relr-ldflag)
+ ifeq (yes,$(have-static-pie))
+-static-pie-ldflag = -static-pie
++static-pie-ldflag = -static-pie -Wl,-z,notext
+ else
+ # Static PIE can't have dynamic relocations in read-only segments since
+ # static PIE is mapped into memory by kernel.  --eh-frame-hdr is needed
+diff --git a/sysdeps/riscv/configure b/sysdeps/riscv/configure
+index 2372225a26..340163779f 100644
+--- a/sysdeps/riscv/configure
++++ b/sysdeps/riscv/configure
+@@ -29,3 +29,5 @@ fi
+ $as_echo "$libc_cv_riscv_r_align" >&6; }
+ config_vars="$config_vars
+ riscv-r-align = $libc_cv_riscv_r_align"
++
++$as_echo "#define SUPPORT_STATIC_PIE 1" >>confdefs.h
+diff --git a/sysdeps/riscv/configure.ac b/sysdeps/riscv/configure.ac
+index dbcc216689..36da2b5396 100644
+--- a/sysdeps/riscv/configure.ac
++++ b/sysdeps/riscv/configure.ac
+@@ -16,3 +16,6 @@ EOF
+   fi
+   rm -rf conftest.*])
+ LIBC_CONFIG_VAR([riscv-r-align], [$libc_cv_riscv_r_align])
++
++dnl Static PIE is supported.
++AC_DEFINE(SUPPORT_STATIC_PIE)
+diff --git a/sysdeps/riscv/dl-machine.h b/sysdeps/riscv/dl-machine.h
+index dfedc9801d..0aa6814b6d 100644
+--- a/sysdeps/riscv/dl-machine.h
++++ b/sysdeps/riscv/dl-machine.h
+@@ -323,7 +323,7 @@ elf_machine_runtime_setup (struct link_map *l, struct r_scope_elem *scope[],
+       gotplt[1] = (ElfW(Addr)) l;
+     }
+ 
+-  if (l->l_type == lt_executable)
++  if (l->l_type == lt_executable && l->l_scope != NULL)
+     {
+       /* The __global_pointer$ may not be defined by the linker if the
+ 	 $gp register does not be used to access the global variable

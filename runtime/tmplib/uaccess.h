@@ -27,10 +27,10 @@ copy_from_user(void *to, const void *from, unsigned long n)
 #define ALLOW_USER_ACCESS(x)                                         \
   {                                                                  \
     unsigned long tmp_storage;                                       \
-    __asm__ volatile("li %0, %1" : "=r"(tmp_storage) : "i"(SR_SUM)); \
-    __asm__ volatile("csrs sstatus, %0" : "=r"(tmp_storage));        \
+    __asm__ ("li %0, %1" : "=r"(tmp_storage) : "i"(SR_SUM)); \
+    __asm__ ("csrs sstatus, %0" :: "r"(tmp_storage));        \
     (x);                                                             \
-    __asm__ volatile("li %0, %1" : "=r"(tmp_storage) : "i"(SR_SUM)); \
-    __asm__ volatile("csrc sstatus, %0" : "=r"(tmp_storage));        \
+    __asm__ ("li %0, %1" : "=r"(tmp_storage) : "i"(SR_SUM)); \
+    __asm__ ("csrc sstatus, %0" :: "r"(tmp_storage));        \
   }
 #endif /* _UACCESS_H_ */

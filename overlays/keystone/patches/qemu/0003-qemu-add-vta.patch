@@ -1,0 +1,161 @@
+diff --git a/hw/riscv/virt.c b/hw/riscv/virt.c
+index a5bc7353b4..a9a93323da 100644
+--- a/hw/riscv/virt.c
++++ b/hw/riscv/virt.c
+@@ -49,6 +49,7 @@
+ #include "hw/pci/pci.h"
+ #include "hw/pci-host/gpex.h"
+ #include "hw/display/ramfb.h"
++#include "hw/misc/unimp.h"
+ 
+ /*
+  * The virt machine physical address space used by some of the devices
+@@ -91,7 +92,8 @@ static const MemMapEntry virt_memmap[] = {
+     [VIRT_IMSIC_M] =      { 0x24000000, VIRT_IMSIC_MAX_SIZE },
+     [VIRT_IMSIC_S] =      { 0x28000000, VIRT_IMSIC_MAX_SIZE },
+     [VIRT_PCIE_ECAM] =    { 0x30000000,    0x10000000 },
+-    [VIRT_PCIE_MMIO] =    { 0x40000000,    0x40000000 },
++    [VIRT_PCIE_MMIO] =    { 0x40000000,    0x20000000 },
++    [VIRT_VTA] =          { 0x60000000,        0x1000 },
+     [VIRT_DRAM] =         { 0x80000000,           0x0 },
+ };
+ 
+@@ -104,6 +106,98 @@ static const MemMapEntry virt_memmap[] = {
+ 
+ static MemMapEntry virt_high_pcie_memmap;
+ 
++typedef struct _vtaregs
++{
++    volatile uint32_t fetch_cmd;
++    volatile uint32_t events;
++    volatile uint32_t insn_count;
++    volatile uint32_t insn_addr;
++    volatile uint32_t uop_addr;
++    volatile uint32_t inp_addr;
++    volatile uint32_t wgt_addr;
++    volatile uint32_t acc_addr;
++    volatile uint32_t out_addr;
++} vta_t;
++
++static MemTxResult vta_read(void *opaque, hwaddr addr,
++                                     uint64_t *data, unsigned size,
++                                     MemTxAttrs attrs) {
++    if(addr == offsetof(vta_t, fetch_cmd)) {
++        *data = 0b10;
++    } else {
++        *data = 0;
++    }
++
++    return MEMTX_OK;
++}
++
++static MemTxResult vta_write(void *opaque, hwaddr addr,
++                                      uint64_t value, unsigned size,
++                                      MemTxAttrs attrs)
++{
++    return MEMTX_OK;
++}
++
++static const MemoryRegionOps vta_ops = {
++        .read_with_attrs = vta_read,
++        .write_with_attrs = vta_write
++};
++
++static void virt_vta_create(RISCVVirtState *s, const MemMapEntry *memmap)
++{
++    memory_region_init_io(&s->vta_region, OBJECT(s), &vta_ops, s, "vta", memmap[VIRT_VTA].size);
++    memory_region_add_subregion(get_system_memory(), memmap[VIRT_VTA].base, &s->vta_region);
++}
++
++static void create_fdt_vta(RISCVVirtState *s, const MemMapEntry *memmap)
++{
++    char *name;
++    MachineState *mc = MACHINE(s);
++
++    name = g_strdup_printf("/soc/vta@%lx", (long) memmap[VIRT_VTA].base);
++    qemu_fdt_add_subnode(mc->fdt, name);
++    qemu_fdt_setprop_string(mc->fdt, name, "compatible", "vta-fpga");
++    qemu_fdt_setprop_string(mc->fdt, name, "status", "okay");
++    qemu_fdt_setprop_cells(mc->fdt, name, "reg",
++                           0x0, memmap[VIRT_VTA].base,
++                           0x0, memmap[VIRT_VTA].size);
++
++    g_free(name);
++}
++
++static void create_fdt_udmabuf(RISCVVirtState *s)
++{
++    char *name;
++    MachineState *mc = MACHINE(s);
++
++    qemu_fdt_add_subnode(mc->fdt, "/reserved-memory");
++    qemu_fdt_setprop_cell(mc->fdt, "/reserved-memory", "#address-cells",2);
++    qemu_fdt_setprop_cell(mc->fdt, "/reserved-memory", "#size-cells",2);
++    qemu_fdt_setprop(mc->fdt, "/reserved-memory", "ranges", NULL, 0);
++
++    name = g_strdup_printf("/reserved-memory/buffer@c0000000");
++    qemu_fdt_add_subnode(mc->fdt, name);
++    qemu_fdt_setprop_string(mc->fdt, name, "compatible", "shared-dma-pool");
++    qemu_fdt_setprop_cells(mc->fdt, name, "reg",
++                           0x0, 0xc0000000,
++                           0x0, 0x10000000);
++
++    qemu_fdt_setprop_cell(mc->fdt, name, "phandle", 0x17);
++    qemu_fdt_setprop(mc->fdt, name, "no-map", NULL, 0);
++    g_free(name);
++
++    name = g_strdup_printf("/udmabuf1");
++    qemu_fdt_add_subnode(mc->fdt, name);
++    qemu_fdt_setprop_string(mc->fdt, name, "device-name", "udmabuf-ddr-nc0");
++    qemu_fdt_setprop_cell(mc->fdt, name, "minor-number", 0x01);
++    qemu_fdt_setprop_cell(mc->fdt, name, "sync-mode", 0x03);
++    qemu_fdt_setprop_cell(mc->fdt, name, "memory-region", 0x17);
++    qemu_fdt_setprop_string(mc->fdt, name, "compatible", "ikwzm,u-dma-buf");
++    qemu_fdt_setprop_cells(mc->fdt, name, "size", 0x0, 0x10000000);
++    g_free(name);
++
++}
++
+ #define VIRT_FLASH_SECTOR_SIZE (256 * KiB)
+ 
+ static PFlashCFI01 *virt_flash_create1(RISCVVirtState *s,
+@@ -1051,6 +1145,8 @@ static void create_fdt(RISCVVirtState *s, const MemMapEntry *memmap,
+ 
+     create_fdt_flash(s, memmap);
+     create_fdt_fw_cfg(s, memmap);
++    create_fdt_vta(s, memmap);
++    create_fdt_udmabuf(s);
+     create_fdt_pmu(s);
+ 
+ update_bootargs:
+@@ -1522,6 +1618,8 @@ static void virt_machine_init(MachineState *machine)
+     }
+     virt_flash_map(s, system_memory);
+ 
++    virt_vta_create(s, memmap);
++
+     /* create device tree */
+     create_fdt(s, memmap, machine->ram_size, machine->kernel_cmdline,
+                riscv_is_32bit(&s->soc[0]));
+diff --git a/include/hw/riscv/virt.h b/include/hw/riscv/virt.h
+index be4ab8fe7f..78dcccdce5 100644
+--- a/include/hw/riscv/virt.h
++++ b/include/hw/riscv/virt.h
+@@ -51,6 +51,7 @@ struct RISCVVirtState {
+     DeviceState *irqchip[VIRT_SOCKETS_MAX];
+     PFlashCFI01 *flash[2];
+     FWCfgState *fw_cfg;
++    MemoryRegion vta_region;
+ 
+     int fdt_size;
+     bool have_aclint;
+@@ -78,7 +79,8 @@ enum {
+     VIRT_PCIE_MMIO,
+     VIRT_PCIE_PIO,
+     VIRT_PLATFORM_BUS,
+-    VIRT_PCIE_ECAM
++    VIRT_PCIE_ECAM,
++    VIRT_VTA
+ };
+ 
+ enum {

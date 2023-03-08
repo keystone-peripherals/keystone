@@ -7,8 +7,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 extern "C" {
-#include "./keystone_user.h"
 #include "common/sha3.h"
+#include "shared/keystone_user.h"
 }
 #include "ElfFile.hpp"
 #include "hash_util.hpp"
@@ -163,14 +163,14 @@ Enclave::loadElf(ElfFile* elf) {
 }
 
 Error
-Enclave::validate_and_hash_enclave(struct runtime_params_t args) {
+Enclave::validate_and_hash_enclave(struct runtime_va_params_t args) {
   hash_ctx_t hash_ctx;
   int ptlevel = RISCV_PGLEVEL_TOP;
 
   hash_init(&hash_ctx);
 
   // hash the runtime parameters
-  hash_extend(&hash_ctx, &args, sizeof(struct runtime_params_t));
+  hash_extend(&hash_ctx, &args, sizeof(struct runtime_va_params_t));
 
   uintptr_t runtime_max_seen = 0;
   uintptr_t user_max_seen    = 0;
@@ -269,7 +269,7 @@ Enclave::getHash() {
 Error
 Enclave::init(
     const char* eapppath, const char* runtimepath, Params _params,
-    uintptr_t alternatePhysAddr) {
+    uintptr_t alternatePhysAddr, bool force_tor) {
   params = _params;
 
   if (params.isSimulated()) {
@@ -342,7 +342,7 @@ Enclave::init(
     ERROR("failed to load untrusted");
   }
 
-  struct runtime_params_t runtimeParams;
+  struct runtime_va_params_t runtimeParams;
   runtimeParams.runtime_entry =
       reinterpret_cast<uintptr_t>(runtimeFile->getEntryPoint());
   runtimeParams.user_entry =
@@ -354,6 +354,9 @@ Enclave::init(
 
   pMemory->startFreeMem();
 
+  struct runtime_misc_params_t miscParams;
+  miscParams.time_since_unix_epoch_s = params.getTimeSinceUnixEpoch();
+
   /* TODO: This should be invoked with some other function e.g., measure() */
   if (params.isSimulated()) {
     validate_and_hash_enclave(runtimeParams);
@@ -361,7 +364,7 @@ Enclave::init(
 
   if (pDevice->finalize(
           pMemory->getRuntimePhysAddr(), pMemory->getEappPhysAddr(),
-          pMemory->getFreePhysAddr(), runtimeParams) != Error::Success) {
+          pMemory->getFreePhysAddr(), runtimeParams, force_tor, miscParams) != Error::Success) {
     destroy();
     return Error::DeviceError;
   }
@@ -421,10 +424,16 @@ Enclave::run(uintptr_t* retval) {
   }
 
   Error ret = pDevice->run(retval);
-  while (ret == Error::EdgeCallHost || ret == Error::EnclaveInterrupted) {
+  while (ret == Error::EdgeCallHost ||
+         ret == Error::EnclaveInterrupted ||
+         ret == Error::EnclaveYielded) {
     /* enclave is stopped in the middle. */
     if (ret == Error::EdgeCallHost && oFuncDispatch != NULL) {
       oFuncDispatch(getSharedBuffer());
+    }
+
+    if(ret == Error::EnclaveYielded) {
+      usleep(10000);
     }
     ret = pDevice->resume(retval);
   }

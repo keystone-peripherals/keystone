@@ -2,10 +2,18 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/sendfile.h>
+
+#define __USE_GNU
+#include <sys/ioctl.h>
+#define _GNU_SOURCE
+#include <poll.h>
+
+
 // Special edge-call handler for syscall proxying
 void
 incoming_syscall(struct edge_call* edge_call) {
@@ -60,6 +68,7 @@ incoming_syscall(struct edge_call* edge_call) {
     case (SYS_getcwd):;  // TODO: how to handle string return 
       sargs_SYS_getcwd* getcwd_args = (sargs_SYS_getcwd*)syscall_info->data;
 			retbuf = getcwd(getcwd_args->buf, getcwd_args->size);
+      ret = 0;
       is_str_ret = 1;
 			break;
     case (SYS_write):;
@@ -98,6 +107,10 @@ incoming_syscall(struct edge_call* edge_call) {
       sargs_SYS_chdir* chdir_args = (sargs_SYS_chdir*) syscall_info->data;
 			ret = chdir(chdir_args->path);
 			break;
+    case(SYS_ioctl):;
+      sargs_SYS_ioctl* ioctl_args = (sargs_SYS_ioctl*) syscall_info->data;
+      ret = ioctl(ioctl_args->fd, ioctl_args->request, ioctl_args + 1);
+      break;
     case (SYS_epoll_ctl):;
       sargs_SYS_epoll_ctl *epoll_ctl_args = (sargs_SYS_epoll_ctl *) syscall_info->data;
       ret = epoll_ctl(epoll_ctl_args->epfd, epoll_ctl_args->op, epoll_ctl_args->fd, (struct epoll_event * ) &epoll_ctl_args->event);
@@ -133,12 +146,12 @@ incoming_syscall(struct edge_call* edge_call) {
       ret = socket(socket_args->domain, socket_args->type, socket_args->protocol); 
       break; 
     case (SYS_setsockopt):;
-      sargs_SYS_setsockopt *setsockopt_args = (sargs_SYS_setsockopt *) syscall_info->data; 
+      sargs_SYS_getsetsockopt *setsockopt_args = (sargs_SYS_getsetsockopt *) syscall_info->data; 
       ret = setsockopt(setsockopt_args->socket, setsockopt_args->level, setsockopt_args->option_name, &setsockopt_args->option_value, setsockopt_args->option_len);
       break;
-    case (SYS_connect):;
-      sargs_SYS_connect *connect_args = (sargs_SYS_connect *) syscall_info->data; 
-      ret = connect(connect_args->sockfd, (struct sockaddr *) &connect_args->addr, connect_args->addrlen);
+    case (SYS_getsockopt):;
+      sargs_SYS_getsetsockopt  *getsockopt_args = (sargs_SYS_getsetsockopt *) syscall_info->data;
+      ret = getsockopt(getsockopt_args->socket, getsockopt_args->level, getsockopt_args->option_name, &getsockopt_args->option_value, &getsockopt_args->option_len);
       break;
     case (SYS_bind):;
       sargs_SYS_bind *bind_args = (sargs_SYS_bind *) syscall_info->data; 
@@ -189,9 +202,85 @@ incoming_syscall(struct edge_call* edge_call) {
       sigset_t *sigmask = pselect_args->sigmask_is_null ? NULL : &pselect_args->sigmask; 
       ret = pselect(pselect_args->nfds, readfds, writefds, exceptfds, timeout, sigmask);
       break;
+    case (SYS_ppoll):;
+      sargs_SYS_ppoll* ppoll_args = (sargs_SYS_ppoll*)syscall_info->data;
+      struct pollfd *ppoll_fds = (void *) ppoll_args + sizeof(sargs_SYS_ppoll);
+      struct timespec *ppoll_timeout = ppoll_args->timeout_is_null ? NULL : &ppoll_args->timeout_ts;
+      sigset_t *ppoll_sigset = ppoll_args->sigmask_is_null ? NULL : &ppoll_args->sigmask;
+      ret = ppoll(ppoll_fds, ppoll_args->nfds, ppoll_timeout, ppoll_sigset);
+      break;
+    case (SYS_sendmsg):;
+      sargs_SYS_sendrecvmsg* sendmsg_args = (sargs_SYS_sendrecvmsg*)syscall_info->data;
+      struct msghdr sendmsghdr = {
+        .msg_name = ((void *) sendmsg_args) + sendmsg_args->msg_name_offs,
+        .msg_namelen = sendmsg_args->msg_namelen,
+        .msg_iov = ((void *) sendmsg_args) + sendmsg_args->msg_iov_offs,
+        .msg_iovlen = sendmsg_args->msg_iovlen,
+        .msg_control = ((void *) sendmsg_args) + sendmsg_args->msg_control_offs,
+        .msg_controllen = sendmsg_args->msg_controllen,
+      };
+
+      // todo unmarshal iovs?
+
+      ret = sendmsg(sendmsg_args->sockfd, &sendmsghdr, sendmsg_args->flags);
+      break;
+    case (SYS_recvmsg):;
+      sargs_SYS_sendrecvmsg* recvmsg_args = (sargs_SYS_sendrecvmsg*)syscall_info->data;
+      struct msghdr recvmsghdr = {
+         .msg_name = ((void *) recvmsg_args) + recvmsg_args->msg_name_offs,
+         .msg_namelen = recvmsg_args->msg_namelen,
+         .msg_iov = ((void *) recvmsg_args) + recvmsg_args->msg_iov_offs,
+         .msg_iovlen = recvmsg_args->msg_iovlen,
+         .msg_control = ((void *) recvmsg_args) + recvmsg_args->msg_control_offs,
+         .msg_controllen = recvmsg_args->msg_controllen,
+      };
+
+      if(recvmsghdr.msg_iovlen != 0) {
+        recvmsghdr.msg_iov[0].iov_base = recvmsghdr.msg_iov + recvmsghdr.msg_iovlen;
+
+        for(int i = 1; i < recvmsghdr.msg_iovlen; i++) {
+          recvmsghdr.msg_iov[i].iov_base =
+            recvmsghdr.msg_iov[i - 1].iov_base + recvmsghdr.msg_iov[i - 1].iov_len;
+        }
+      }
+
+      ret = recvmsg(recvmsg_args->sockfd, &recvmsghdr, recvmsg_args->flags);
+      recvmsg_args->msg_flags = recvmsghdr.msg_flags;
+      break;
+    case(SYS_connect):;
+      sargs_SYS_connect* connect_args = (sargs_SYS_connect*)syscall_info->data;
+      ret = connect(connect_args->sockfd, (struct sockaddr*)&connect_args->addr, connect_args->addrlen);
+
+      // if (ret < 0) {
+      //   printf("### connect(%d, &addr, %hu) failed! sdk/src/edge/edge_syscall.c:%d with ret %ld, errno %d\n", 
+      //     connect_args->sockfd,
+      //     connect_args->addrlen,
+      //     __LINE__, 
+      //     ret, 
+      //     errno
+      //   );
+      //   printf("### addr: ");
+      //   for (int i = 0; i < connect_args->addrlen; i += 1) printf("0x%02X | ", connect_args->addr[i]);
+      //   printf("\n\n");
+      // } else {
+      //   printf("$$$ connect(%d, &addr, %hu) succeeded! sdk/src/edge/edge_syscall.c:%d with ret %ld\n", 
+      //     connect_args->sockfd,
+      //     connect_args->addrlen,
+      //     __LINE__, 
+      //     ret
+      //   );
+      //   printf("$$$ addr: ");
+      //   for (int i = 0; i < connect_args->addrlen; i += 1) printf("0x%02X | ", connect_args->addr[i]);
+      //   printf("\n\n");
+      // }
+
+      break;
     default:
       goto syscall_error;
   }
+
+  if (ret < 0)
+    ret = -errno;
 
   /* Setup return value */
   void* ret_data_ptr      = (void*)edge_call_data_ptr();

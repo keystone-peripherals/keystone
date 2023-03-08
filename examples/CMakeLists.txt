@@ -34,12 +34,26 @@ set(KEYSTONE_LIB_HOST ${KEYSTONE_SDK_DIR}/lib/libkeystone-host.a)
 set(KEYSTONE_LIB_EDGE ${KEYSTONE_SDK_DIR}/lib/libkeystone-edge.a)
 set(KEYSTONE_LIB_VERIFIER ${KEYSTONE_SDK_DIR}/lib/libkeystone-verifier.a)
 set(KEYSTONE_LIB_EAPP ${KEYSTONE_SDK_DIR}/lib/libkeystone-eapp.a)
+set(KEYSTONE_LIB_UTIL ${KEYSTONE_SDK_DIR}/lib/libkeystone-util.a)
 
 # create a phony target "examples"
 add_custom_target("examples")
 
+# Keep cmake from automatically adding a -Wl,-rpath,... to the compiler command line.
+# This is completely unneeded for these executables (since they are all static), and
+# is particularly disastrous for the export case since an unexpected DT_RPATH tag
+# in the dynamic section can kill the startup/relocation process
+set(CMAKE_SKIP_BUILD_RPATH TRUE)
+
 # add all examples below
-add_subdirectory(hello)
-add_subdirectory(hello-native)
-add_subdirectory(attestation)
-add_subdirectory(tests)
+#add_subdirectory(hello)
+#add_subdirectory(hello-native)
+#add_subdirectory(attestation)
+#add_subdirectory(tests)
+#add_subdirectory(devshare)
+#add_subdirectory(ports)
+#add_subdirectory(maps)
+#add_subdirectory(openssl-download)
+add_subdirectory(vta)
+
+add_subdirectory(profile)

@@ -14,7 +14,7 @@
 
 unsigned long sbi_sm_create_enclave(unsigned long* eid, uintptr_t create_args)
 {
-  struct keystone_sbi_create create_args_local;
+  struct keystone_sbi_create_t create_args_local;
   unsigned long ret;
 
   ret = copy_enclave_create_args(create_args, &create_args_local);
@@ -86,7 +86,53 @@ unsigned long sbi_sm_get_sealing_key(uintptr_t sealing_key, uintptr_t key_ident,
   return ret;
 }
 
-unsigned long sbi_sm_random()
+unsigned long sbi_sm_claim_mmio(uintptr_t dev_string)
+{
+    unsigned long ret;
+    ret = claim_mmio(dev_string, cpu_get_enclave_id());
+    return ret;
+}
+
+unsigned long sbi_sm_release_mmio(uintptr_t dev_string)
+{
+    unsigned long ret;
+    ret = release_mmio(dev_string, cpu_get_enclave_id());
+    return ret;
+}
+
+unsigned long sbi_sm_call_enclave(struct sbi_trap_regs *regs, unsigned long eid, int type)
+{
+    unsigned long ret;
+    ret = call_enclave(regs, cpu_get_enclave_id(), eid, type);
+    return ret;
+}
+
+unsigned long sbi_sm_ret_enclave(struct sbi_trap_regs *regs)
+{
+    unsigned long ret;
+    ret = ret_enclave(regs);
+    return ret;
+}
+
+unsigned long sbi_sm_register_handler(uintptr_t handler){
+    unsigned long ret;
+    ret = register_handler(handler, cpu_get_enclave_id());
+    return ret;
+}
+
+unsigned long sbi_sm_share_region(uintptr_t addr, size_t size, enclave_id with) {
+  unsigned long ret;
+  ret = share_region(addr, size, with, cpu_get_enclave_id());
+  return ret;
+}
+
+unsigned long sbi_sm_unshare_region(uintptr_t addr, enclave_id with) {
+    unsigned long ret;
+    ret = unshare_region(addr, with, cpu_get_enclave_id());
+    return ret;
+}
+
+unsigned long sbi_sm_random(void)
 {
   return (unsigned long) platform_random();
 }
@@ -96,4 +142,10 @@ unsigned long sbi_sm_call_plugin(uintptr_t plugin_id, uintptr_t call_id, uintptr
   unsigned long ret;
   ret = call_plugin(cpu_get_enclave_id(), plugin_id, call_id, arg0, arg1);
   return ret;
+}
+
+unsigned long sbi_sm_get_misc_params(uintptr_t out)
+{
+  *((struct runtime_misc_params_t*)out) = *get_enclave_misc_params(cpu_get_enclave_id());
+  return 0;
 }

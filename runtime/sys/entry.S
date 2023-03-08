@@ -1,11 +1,11 @@
 #include <asm/csr.h>
 #include "util/asm_helpers.h"
+#include "sys/thread.h"
 
 .text
 //entry point to the runtime!
 .altmacro
 .macro SAVE_ALL_BUT_SP
-  addi sp, sp, -ENCL_CONTEXT_SIZE
   STORE ra, 1*REGBYTES(sp)
   STORE gp, 3*REGBYTES(sp)
   STORE tp, 4*REGBYTES(sp)
@@ -104,20 +104,26 @@
   LOAD t4, 29*REGBYTES(sp)
   LOAD t5, 30*REGBYTES(sp)
   LOAD t6, 31*REGBYTES(sp)
-  addi sp, sp, ENCL_CONTEXT_SIZE
 .endm
 
 _start:
-  la sp, kernel_stack_end
+  la sp, kernel_stacks_end
+  addi sp, sp, -8*REGBYTES
+  STORE a0, 0*REGBYTES(sp)
+  STORE a1, 1*REGBYTES(sp)
+  STORE a2, 2*REGBYTES(sp)
+  STORE a3, 3*REGBYTES(sp)
+  STORE a4, 4*REGBYTES(sp)
+  STORE a5, 5*REGBYTES(sp)
+  STORE a6, 6*REGBYTES(sp)
+  STORE a7, 7*REGBYTES(sp)
 
-  /* set sscratch zero so that the trap handler can
-   * notice that the trap is from S-mode */
-  csrw sscratch, x0
-
+  mv a0, sp
   jal eyrie_boot
 
   /* start running enclave */
-  csrrw sp, sscratch, sp
+  mv sp, a0
+  mv a0, x0
   sret
 
 .align 6
@@ -127,15 +133,12 @@ encl_trap_handler:
 /* TODO we may want to explicitly disable the FPU here ala linux */
 
   csrrw sp, sscratch, sp
-  bnez sp, __save_context
-  /* if trap is from kernel, restore sp */
-  csrr sp, sscratch
 
-__save_context:
   /* save previous context */
-  SAVE_ALL_BUT_SP
 
-  csrrw t0, sscratch, x0           # t0 <- previous sp
+  // This code assumes that ctx is the first part of the thread struct
+  SAVE_ALL_BUT_SP
+  csrrw t0, sscratch, sp           # t0 <- previous sp, sscratch <- thread data
   STORE t0, 2*REGBYTES(sp)         # previous sp
 
   csrr t0, sepc
@@ -162,8 +165,10 @@ __save_context:
   CLEAR_ALL_BUT_SP
 
   mv a0, sp
-
   la t0, handle_interrupts
+
+  // This assumes that the kernel stack pointer is right after context
+  LOAD sp, ENCL_CONTEXT_SIZE(sp)
   jalr t0
 
   j return_to_encl
@@ -177,20 +182,20 @@ __save_context:
   LOAD t1, 0(t1)
 
   mv a0, sp
-
+  // This assumes that the kernel stack pointer is right after context
+  LOAD sp, ENCL_CONTEXT_SIZE(sp)
   jalr t1
 
 return_to_encl:
+  csrr sp, sscratch
   LOAD t0, (sp)
   csrw sepc, t0
-
 
   // restore user stack
   LOAD t0, 2*REGBYTES(sp)
   csrw sscratch, t0
 
   RESTORE_ALL_BUT_SP
-
   csrrw sp, sscratch, sp
   sret
 

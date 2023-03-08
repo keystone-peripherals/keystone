@@ -8,25 +8,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define SBI_SET_TIMER 0
-#define SBI_CONSOLE_PUTCHAR 1
-#define SBI_CONSOLE_GETCHAR 2
+#include "sm_call.h"
 
-#define SBI_SM_CREATE_ENCLAVE    2001
-#define SBI_SM_DESTROY_ENCLAVE   2002
-#define SBI_SM_RUN_ENCLAVE       2003
-#define SBI_SM_RESUME_ENCLAVE    2005
-#define SBI_SM_RANDOM            3001
-#define SBI_SM_ATTEST_ENCLAVE    3002
-#define SBI_SM_GET_SEALING_KEY   3003
-#define SBI_SM_STOP_ENCLAVE      3004
-#define SBI_SM_EXIT_ENCLAVE      3006
-#define SBI_SM_CALL_PLUGIN       4000
-
-/* Plugin IDs and Call IDs */
-#define SM_MULTIMEM_PLUGIN_ID   0x01
-#define SM_MULTIMEM_CALL_GET_SIZE 0x01
-#define SM_MULTIMEM_CALL_GET_ADDR 0x02
+extern uintptr_t timestamp_exit, timestamp_return;
 
 void
 sbi_putchar(char c);
@@ -46,5 +30,27 @@ uintptr_t
 sbi_attest_enclave(void* report, void* buf, uintptr_t len);
 uintptr_t
 sbi_get_sealing_key(uintptr_t key_struct, uintptr_t key_ident, uintptr_t len);
+uintptr_t
+sbi_claim_mmio(uintptr_t dev_string);
+uintptr_t
+sbi_release_mmio(uintptr_t dev_string);
+
+#ifdef USE_CALLEE
+uintptr_t
+sbi_call_enclave(int eid, int type, uintptr_t arg0, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3);
+void
+sbi_ret_enclave(uintptr_t ret) __attribute__((noreturn));
+uintptr_t
+sbi_register_handler(uintptr_t handler);
+#endif
+
+uintptr_t
+sbi_share_region(uintptr_t addr, size_t size, int with);
+
+uintptr_t
+sbi_unshare_region(uintptr_t addr, int with);
+
+uintptr_t
+sbi_get_misc_params(struct runtime_misc_params_t* out_phys_adr);
 
 #endif

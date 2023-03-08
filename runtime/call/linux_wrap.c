@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/utsname.h>
+#include <sys/sysinfo.h>
 #include <time.h>
 
 #include "mm/freemem.h"
@@ -13,12 +14,45 @@
 #include "util/rt_util.h"
 #include "call/syscall.h"
 #include "uaccess.h"
+#include "sys/thread.h"
+#include <asm/ioctl.h>
+
+#ifdef USE_CALLEE
+#include "call/callee.h"
+#endif // USE_CALLEE
 
 #define CLOCK_FREQ 1000000000
 
+uint64_t initial_time_since_unix_epoch_s;
+
 //TODO we should check which clock this is
-uintptr_t linux_clock_gettime(__clockid_t clock, struct timespec *tp){
+uintptr_t linux_clock_gettime(clockid_t clock, struct timespec *tp){
   print_strace("[runtime] clock_gettime not fully supported (clock %x, assuming)\r\n", clock);
+  // // original
+  // print_strace("[runtime] clock_gettime not fully supported (clock %x, assuming)\r\n", clock);
+  // unsigned long cycles;
+  // __asm__ __volatile__("rdcycle %0" : "=r"(cycles));
+  // 
+  // unsigned long sec = cycles / CLOCK_FREQ;
+  // unsigned long nsec = (cycles % CLOCK_FREQ);
+  // copy_to_user(&(tp->tv_sec), &sec, sizeof(unsigned long));
+  // copy_to_user(&(tp->tv_nsec), &nsec, sizeof(unsigned long));
+  // return 0;
+
+  // // time from linux
+  // in conf/qemu_riscv64_virt_defconfig
+  // uintptr_t ret = -1;
+  // struct edge_syscall* edge_syscall = (struct edge_syscall*)edge_call_data_ptr();
+  // edge_syscall->syscall_num = SYS_clock_gettime;
+  // struct sargs_SYS_clock_gettime* params = (struct sargs_SYS_clock_gettime*)edge_syscall->data;
+  // params->clock = clock;
+  // size_t totalsize = sizeof(struct edge_syscall) + sizeof(sargs_SYS_clock_gettime);
+  // ret = dispatch_edgecall_syscall(edge_syscall, totalsize);
+  // copy_to_user(tp, &params->tp, sizeof(struct timespec));
+  // print_strace("!!! clock_gettime on clock %i sec: %ld\n", (int)clock, params->tp.tv_sec);
+  // return ret;
+
+  // time from initial_time_since_unix_epoch_s + hardware clock since boot
   unsigned long cycles;
   __asm__ __volatile__("rdcycle %0" : "=r"(cycles));
 
@@ -28,17 +62,50 @@ uintptr_t linux_clock_gettime(__clockid_t clock, struct timespec *tp){
   copy_to_user(&(tp->tv_sec), &sec, sizeof(unsigned long));
   copy_to_user(&(tp->tv_nsec), &nsec, sizeof(unsigned long));
 
+  struct timespec timespec;
+  timespec.tv_sec = initial_time_since_unix_epoch_s + sec;
+  timespec.tv_nsec = (initial_time_since_unix_epoch_s * 1000) + nsec;
+  copy_to_user(tp, &timespec, sizeof(struct timespec));
+  print_strace("!!! clock_gettime on clock %i sec: %ld\n", (int)clock, timespec.tv_sec);
   return 0;
 }
 
 uintptr_t linux_set_tid_address(int* tidptr_t){
-  //Ignore for now
-  print_strace("[runtime] set_tid_address, not setting address (%p), IGNORING\r\n",tidptr_t);
-  return 1;
+#ifdef USE_CALLEE
+  if(!is_main_thread()) {
+    print_strace("[runtime] set_tid_address for callee to %p\r\n", tidptr_t);
+    return syscall_set_tid_address(tidptr_t);
+  } else
+#endif // USE_CALLEE
+  {
+    //Ignore for now
+    print_strace("[runtime] set_tid_address, not setting address (%p), IGNORING\r\n",tidptr_t);
+    return 1;
+  }
 }
 
 uintptr_t linux_rt_sigprocmask(int how, const sigset_t *set, sigset_t *oldset){
   print_strace("[runtime] rt_sigprocmask not supported (how %x), IGNORING\r\n", how);
+  return 0;
+}
+
+uintptr_t linux_sysinfo(struct sysinfo *info) {
+  struct sysinfo sysinfo = {
+    .uptime = 0,
+      .loads = {0, 0, 0},
+      .totalram = freemem_size / RISCV_PAGE_SIZE,
+      .freeram = spa_available(),
+      .sharedram = shared_buffer_size / RISCV_PAGE_SIZE,
+      .bufferram = 0,
+      .totalswap = 0,
+      .freeswap = 0,
+      .procs = 1,
+      .totalhigh = 0,
+      .freehigh = 0,
+      .mem_unit = RISCV_PAGE_SIZE
+  };
+
+  copy_to_user(info, &sysinfo, sizeof(struct sysinfo));
   return 0;
 }
 
@@ -110,11 +177,13 @@ uintptr_t syscall_munmap(void *addr, size_t length){
 
 uintptr_t syscall_mmap(void *addr, size_t length, int prot, int flags,
                  int fd, __off_t offset){
+  int req_pages = 0;
   uintptr_t ret = (uintptr_t)((void*)-1);
 
   int pte_flags = PTE_U | PTE_A;
 
-  if(flags != (MAP_ANONYMOUS | MAP_PRIVATE) || fd != -1){
+  // ignore stack flag
+  if((flags & ~MAP_STACK) != (MAP_ANONYMOUS | MAP_PRIVATE) || fd != -1){
     // we don't support mmaping any other way yet
     goto done;
   }
@@ -130,7 +199,7 @@ uintptr_t syscall_mmap(void *addr, size_t length, int prot, int flags,
 
 
   // Find a continuous VA space that will fit the req. size
-  int req_pages = vpn(PAGE_UP(length));
+  req_pages = vpn(PAGE_UP(length));
 
   // Do we have enough available phys pages?
   if( req_pages > spa_available()){
@@ -138,21 +207,9 @@ uintptr_t syscall_mmap(void *addr, size_t length, int prot, int flags,
   }
 
   // Start looking at EYRIE_ANON_REGION_START for VA space
-  uintptr_t starting_vpn = vpn(EYRIE_ANON_REGION_START);
-  uintptr_t valid_pages;
-  while((starting_vpn + req_pages) <= EYRIE_ANON_REGION_END){
-    valid_pages = test_va_range(starting_vpn, req_pages);
-
-    if(req_pages == valid_pages){
-      // Set a successful value if we allocate
-      // TODO free partial allocation on failure
-      if(alloc_pages(starting_vpn, req_pages, pte_flags) == req_pages){
-        ret = starting_vpn << RISCV_PAGE_BITS;
-      }
-      break;
-    }
-    else
-      starting_vpn += valid_pages + 1;
+  uintptr_t vpn = find_va_range(req_pages, true);
+  if(vpn && alloc_pages(vpn, req_pages, pte_flags) == req_pages) {
+    ret = vpn << RISCV_PAGE_BITS;
   }
 
  done:
@@ -192,7 +249,7 @@ uintptr_t syscall_brk(void* addr){
   uintptr_t req_break = (uintptr_t)addr;
 
   uintptr_t current_break = get_program_break();
-  uintptr_t ret;
+  uintptr_t ret = -1;
   int req_page_count = 0;
 
   // Return current break if null or current break
@@ -211,6 +268,11 @@ uintptr_t syscall_brk(void* addr){
   // Can we allocate enough phys pages?
   req_page_count = (PAGE_UP(req_break) - current_break) / RISCV_PAGE_SIZE;
   if( spa_available() < req_page_count){
+    goto done;
+  }
+
+  // Check if this memory is allocated
+  if(test_va_range(vpn(current_break), req_page_count) != req_page_count) {
     goto done;
   }
 
@@ -234,4 +296,36 @@ uintptr_t syscall_brk(void* addr){
   return ret;
 
 }
+
+uintptr_t syscall_ioctl(int fd, unsigned long req, uintptr_t ptr) {
+  uintptr_t ret = -1;
+  struct edge_syscall* edge_syscall = (struct edge_syscall*)edge_call_data_ptr();
+  sargs_SYS_ioctl* args = (sargs_SYS_ioctl*) edge_syscall->data;
+
+  edge_syscall->syscall_num = SYS_ioctl;
+  args->fd = fd;
+  args->request = req;
+
+  // If this is an output call, copy data into the buffer
+  if(_IOC_DIR(req) & IOC_OUT) {
+    if(edge_call_check_ptr_valid((uintptr_t) (args + 1), _IOC_SIZE(req)) != 0) {
+      goto done;
+    }
+
+    copy_from_user(args + 1, (void *) ptr, _IOC_SIZE(req));
+  }
+
+  size_t totalsize = sizeof(struct edge_syscall) + sizeof(sargs_SYS_ioctl) + _IOC_SIZE(req);
+  ret = dispatch_edgecall_syscall(edge_syscall, totalsize);
+
+  // If this is an input call, copy data out of the buffer
+  if(_IOC_DIR(req) & IOC_IN) {
+    copy_to_user((void *) ptr, args + 1, _IOC_SIZE(req));
+  }
+
+done:
+  print_strace("[runtime] ioctl on %i with %x = %i\r\n", fd, req, ret);
+  return ret;
+}
+
 #endif /* USE_LINUX_SYSCALL */

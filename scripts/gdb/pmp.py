@@ -71,7 +71,7 @@ class PMPDump(gdb.Command):
 
                                 print(f'PMP reg {8 * i + j} {type}')
                                 print(f'\tcfg\t{hex(reg_cfg)} {"R" if r else ""}{"W" if w else ""}{"X" if x else ""}{"L" if l else ""}')
-                                print(f'\taddr\t{hex(reg_addr)} = {hex(range_bottom)} -> {hex(range_top)}')
+                                print(f'\taddr\t{hex(reg_addr)} = {hex(range_bottom)} -> {hex(range_top)} (sz {hex(range_top - range_bottom)})')
 
                                 prev_addr = reg_addr
 

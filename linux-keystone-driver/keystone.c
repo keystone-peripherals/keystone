@@ -38,8 +38,8 @@ struct miscdevice keystone_dev = {
 
 int keystone_mmap(struct file* filp, struct vm_area_struct *vma)
 {
-  struct utm* utm;
-  struct epm* epm;
+  struct encl_mem* utm;
+  struct encl_mem* epm;
   struct enclave* enclave;
   unsigned long vsize, psize;
   vaddr_t paddr;
@@ -56,7 +56,7 @@ int keystone_mmap(struct file* filp, struct vm_area_struct *vma)
   if(enclave->is_init){
     if (vsize > PAGE_SIZE)
       return -EINVAL;
-    paddr = __pa(epm->root_page_table) + (vma->vm_pgoff << PAGE_SHIFT);
+    paddr = epm->pa + (vma->vm_pgoff << PAGE_SHIFT);
     remap_pfn_range(vma,
                     vma->vm_start,
                     paddr >> PAGE_SHIFT,
@@ -69,7 +69,7 @@ int keystone_mmap(struct file* filp, struct vm_area_struct *vma)
       return -EINVAL;
     remap_pfn_range(vma,
                     vma->vm_start,
-                    __pa(utm->ptr) >> PAGE_SHIFT,
+                    utm->pa >> PAGE_SHIFT,
                     vsize, vma->vm_page_prot);
   }
   return 0;
@@ -86,7 +86,12 @@ static int __init keystone_dev_init(void)
     pr_err("keystone_enclave: misc_register() failed\n");
   }
 
+#ifdef KEYSTONE_PLAT_mpfs
+  keystone_dev.this_device->dma_coherent = true;
+  keystone_dev.this_device->coherent_dma_mask = DMA_BIT_MASK(64);
+#else
   keystone_dev.this_device->coherent_dma_mask = DMA_BIT_MASK(32);
+#endif
 
   pr_info("keystone_enclave: " DRV_DESCRIPTION " v" DRV_VERSION "\n");
   return ret;

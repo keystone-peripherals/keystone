@@ -1,0 +1,30 @@
+diff --git a/hw/riscv/virt.c b/hw/riscv/virt.c
+index a590dc48dc..145065a069 100644
+--- a/hw/riscv/virt.c
++++ b/hw/riscv/virt.c
+@@ -121,7 +121,8 @@ static void create_fdt_vta(RISCVVirtState *s, const MemMapEntry *memmap)
+     name = g_strdup_printf("/soc/vta@%lx", (long) memmap[VIRT_VTA].base);
+     qemu_fdt_add_subnode(mc->fdt, name);
+     qemu_fdt_setprop_string(mc->fdt, name, "compatible", "vta-fpga");
+-    qemu_fdt_setprop_string(mc->fdt, name, "status", "okay");
++    qemu_fdt_setprop_string(mc->fdt, name, "status", "disabled");
++    qemu_fdt_setprop_string(mc->fdt, name, "secure-status", "okay");
+     qemu_fdt_setprop_cells(mc->fdt, name, "reg",
+                            0x0, memmap[VIRT_VTA].base,
+                            0x0, memmap[VIRT_VTA].size);
+@@ -160,6 +161,15 @@ static void create_fdt_udmabuf(RISCVVirtState *s)
+     qemu_fdt_setprop_cells(mc->fdt, name, "size", 0x0, 0x10000000);
+     g_free(name);
+ 
++    name = g_strdup_printf("/soc/cma@C0000000");
++    qemu_fdt_add_subnode(mc->fdt, name);
++    qemu_fdt_setprop_string(mc->fdt, name, "compatible", "none");
++    qemu_fdt_setprop_cells(mc->fdt, name, "reg",
++                       0x0, 0xc0000000,
++                       0x0, 0x10000000);
++    qemu_fdt_setprop_string(mc->fdt, name, "status", "disabled");
++    qemu_fdt_setprop_string(mc->fdt, name, "secure-status", "okay");
++    g_free(name);
+ }
+ 
+ #define VIRT_FLASH_SECTOR_SIZE (256 * KiB)

@@ -49,7 +49,7 @@ class Enclave {
   Error loadUntrusted();
   bool mapElf(ElfFile* file);
   Error loadElf(ElfFile* file);
-  Error validate_and_hash_enclave(struct runtime_params_t args);
+  Error validate_and_hash_enclave(struct runtime_va_params_t args);
 
   bool initFiles(const char*, const char*);
   bool initDevice();
@@ -66,7 +66,7 @@ class Enclave {
   Error init(const char* filepath, const char* runtime, Params parameters);
   Error init(
       const char* eapppath, const char* runtimepath, Params _params,
-      uintptr_t alternatePhysAddr);
+      uintptr_t alternatePhysAddr, bool force_tor = false);
   Error destroy();
   Error run(uintptr_t* ret = nullptr);
 };

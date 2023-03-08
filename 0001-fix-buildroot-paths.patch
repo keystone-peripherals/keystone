@@ -1,0 +1,20 @@
+diff --git a/Makefile b/Makefile
+index 7fcd9e6bcb..7b56c7d2b7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -713,6 +713,15 @@ STAGING_DIR_FILES_LISTS = $(sort $(wildcard $(BUILD_DIR)/*/.files-list-staging.t
+ host-finalize: $(PACKAGES) $(HOST_DIR) $(HOST_DIR_SYMLINK)
+ 	@$(call MESSAGE,"Finalizing host directory")
+ 	$(call per-package-rsync,$(sort $(PACKAGES)),host,$(HOST_DIR))
++ifeq ($(BR2_PER_PACKAGE_DIRECTORIES),y)
++	$(Q)grep --binary-files=without-match -lrZ '$(PER_PACKAGE_DIR)/[^/]\+/host' $(HOST_DIR) \
++	|while read -d '' f; do \
++		file -b --mime-type "$${f}" | grep -q '^text/' || continue; \
++		printf '%s\0' "$${f}"; \
++	done \
++	|xargs -0 --no-run-if-empty \
++		$(SED) 's:$(PER_PACKAGE_DIR)/[^/]\+/host:$(HOST_DIR):g'
++endif
+ 
+ .PHONY: staging-finalize
+ staging-finalize: $(STAGING_DIR_SYMLINK)

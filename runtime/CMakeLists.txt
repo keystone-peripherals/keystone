@@ -34,9 +34,14 @@ rt_option(PAGE_HASH "Enable page integrity" OFF)
 rt_option(LINUX_SYSCALL "Wrap generic Linux syscalls" OFF)
 rt_option(IO_SYSCALL "Wrap Linux IO syscalls" OFF)
 rt_option(NET_SYSCALL "Wrap Linux net syscalls" OFF)
+rt_option(CALLEE "Include callee message-passing infrastructure" OFF)
+rt_option(CALLEE_PROFILE "Configure callee infrastructure for profiling" OFF)
 
 # System options
 rt_option(ENV_SETUP "Set up stack environments like glibc expects" OFF)
+
+# Driver options
+rt_option(DRIVERS "Include support for hardware drivers" OFF)
 
 # Debugging options
 rt_option(INTERNAL_STRACE "Debug syscalls" OFF)
@@ -47,6 +52,7 @@ if(DEFINED EYRIE_SRCDIR)
 endif()
 
 include_directories(${KEYSTONE_SDK_DIR}/include/edge)
+include_directories(${KEYSTONE_SDK_DIR}/include/shared)
 include_directories(tmplib)
 include_directories(include)
 
@@ -59,6 +65,7 @@ add_compile_options(-Wall -Werror -fPIC -fno-builtin -std=c11 -g)
 # Generate all the library targets
 add_subdirectory(call)
 add_subdirectory(crypto)
+add_subdirectory(drivers)
 add_subdirectory(mm)
 add_subdirectory(tmplib)
 add_subdirectory(util)
